@@ -15,6 +15,103 @@ const api = new BalldontlieAPI({
   apiKey: import.meta.env.VITE_BALDLIE_API_KEY,
 });
 
+// Player ID mapping for popular players (balldontlie ID -> NBA.com ID)
+const PLAYER_ID_MAPPING = {
+  // Popular players - you can expand this list
+  19: "201939", // Stephen Curry
+  15: "203507", // Giannis Antetokounmpo
+  246: "203999", // Nikola Jokic
+  237: "203076", // Anthony Davis
+  // Add more mappings as needed
+};
+
+// Image component with name-based fallback handling
+const PlayerImage = ({ player, className, style, alt, size = "150x150" }) => {
+  const [currentImageIndex, setCurrentImageIndex] = useState(0);
+  const [googleImageUrl, setGoogleImageUrl] = useState(null);
+  const [isSearching, setIsSearching] = useState(false);
+
+  const teamAbbr = player.team?.abbreviation || "";
+  const nbaId = PLAYER_ID_MAPPING[player.id]; // Check if we have a mapping
+  const playerName = `${player.first_name || ""} ${
+    player.last_name || ""
+  }`.trim();
+
+  // Search for Google image when component mounts
+  useEffect(() => {
+    const searchForImage = async () => {
+      if (!googleImageUrl && !isSearching && playerName) {
+        setIsSearching(true);
+        const imageUrl = await searchPlayerImage(playerName);
+        setGoogleImageUrl(imageUrl);
+        setIsSearching(false);
+      }
+    };
+
+    searchForImage();
+  }, [player.id, playerName, googleImageUrl, isSearching]);
+
+  // Try different image strategies
+  const imageSources = [
+    // Strategy 1: Use Google search result if available
+    googleImageUrl,
+
+    // Strategy 2: Use mapped NBA ID if available
+    nbaId
+      ? `https://cdn.nba.com/headshots/nba/latest/1040x760/${nbaId}.png`
+      : null,
+    nbaId
+      ? `https://a.espncdn.com/i/headshots/nba/players/full/${nbaId}.png`
+      : null,
+
+    // Strategy 3: Try with balldontlie ID (unlikely to work)
+    `https://cdn.nba.com/headshots/nba/latest/1040x760/${player.id}.png`,
+
+    // Strategy 4: Team logo fallback
+    teamAbbr
+      ? `https://cdn.nba.com/logos/nba/${player.team.id}/global/L/logo.svg`
+      : null,
+
+    // Strategy 5: Placeholder with initials
+    `https://via.placeholder.com/${size}/6B7280/FFFFFF?text=${
+      player.first_name?.[0] || "P"
+    }${player.last_name?.[0] || "L"}`,
+  ].filter(Boolean);
+
+  const handleImageError = () => {
+    if (currentImageIndex < imageSources.length - 1) {
+      setCurrentImageIndex(currentImageIndex + 1);
+    }
+  };
+
+  useEffect(() => {
+    setCurrentImageIndex(0);
+    setGoogleImageUrl(null); // Reset Google image when player changes
+  }, [player.id]);
+
+  // Show loading placeholder while searching
+  if (isSearching && currentImageIndex === 0) {
+    return (
+      <div
+        className={`${className} bg-gray-600 flex items-center justify-center`}
+        style={style}
+      >
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white"></div>
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={imageSources[currentImageIndex]}
+      alt={alt}
+      className={className}
+      style={style}
+      onError={handleImageError}
+    />
+  );
+};
+
 const PlayerCard = ({
   player,
   viewMode,
@@ -32,9 +129,6 @@ const PlayerCard = ({
   }`.trim();
   const teamName = player.team?.full_name || "Unknown Team";
   const teamColor = "#6B7280"; // Default gray color
-  const placeholderImage = `https://via.placeholder.com/150x150/6B7280/FFFFFF?text=${
-    player.first_name?.[0] || "P"
-  }${player.last_name?.[0] || "L"}`;
 
   return (
     <div className={cardClass} onClick={() => onPlayerClick(player)}>
@@ -61,11 +155,12 @@ const PlayerCard = ({
           </div>
 
           <div className="text-center">
-            <img
-              src={placeholderImage}
+            <PlayerImage
+              player={player}
               alt={playerName}
               className="w-20 h-20 rounded-full mx-auto mb-4 border-2"
               style={{ borderColor: teamColor }}
+              size="150x150"
             />
             <h3 className="text-white font-bold text-lg mb-1">{playerName}</h3>
             <p className="text-gray-400 text-sm mb-2">
@@ -90,11 +185,12 @@ const PlayerCard = ({
         </>
       ) : (
         <>
-          <img
-            src={placeholderImage}
+          <PlayerImage
+            player={player}
             alt={playerName}
             className="w-16 h-16 rounded-full border-2"
             style={{ borderColor: teamColor }}
+            size="150x150"
           />
           <div className="flex-1">
             <div className="flex justify-between items-start">
@@ -138,9 +234,6 @@ const PlayerModal = ({ player, isOpen, onClose }) => {
   }`.trim();
   const teamName = player.team?.full_name || "Unknown Team";
   const teamColor = "#6B7280"; // Default gray color
-  const placeholderImage = `https://via.placeholder.com/200x200/6B7280/FFFFFF?text=${
-    player.first_name?.[0] || "P"
-  }${player.last_name?.[0] || "L"}`;
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -158,11 +251,12 @@ const PlayerModal = ({ player, isOpen, onClose }) => {
 
           <div className="flex flex-col md:flex-row gap-6">
             <div className="text-center md:text-left">
-              <img
-                src={placeholderImage}
+              <PlayerImage
+                player={player}
                 alt={playerName}
                 className="w-32 h-32 rounded-full mx-auto md:mx-0 border-4"
                 style={{ borderColor: teamColor }}
+                size="200x200"
               />
             </div>
 
@@ -228,6 +322,37 @@ const PlayerModal = ({ player, isOpen, onClose }) => {
       </div>
     </div>
   );
+};
+
+// Search for player images using Google Custom Search API
+const searchPlayerImage = async (playerName) => {
+  try {
+    // Get API keys from Google Cloud Console
+    // 1. Enable Custom Search API: https://console.cloud.google.com/apis/library/customsearch.googleapis.com
+    // 2. Create Custom Search Engine: https://cse.google.com/cse/
+    const GOOGLE_API_KEY = import.meta.env.VITE_GOOGLE_API_KEY;
+    const GOOGLE_CX = import.meta.env.VITE_GOOGLE_CX; // Custom Search Engine ID
+
+    if (!GOOGLE_API_KEY || !GOOGLE_CX) {
+      return null;
+    }
+
+    const query = `${playerName} NBA player headshot`;
+    const response = await fetch(
+      `https://www.googleapis.com/customsearch/v1?key=${GOOGLE_API_KEY}&cx=${GOOGLE_CX}&q=${encodeURIComponent(
+        query
+      )}&searchType=image&num=1&imgSize=medium&imgType=photo&safe=active`
+    );
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const data = await response.json();
+    return data.items?.[0]?.link || null;
+  } catch {
+    return null;
+  }
 };
 
 const App = () => {
